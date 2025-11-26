@@ -1,7 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 import ContactForm, { Contact } from "@/components/ContactForm";
 import ContactList from "@/components/ContactList";
-import { Users } from "lucide-react";
+import { LogOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useContacts } from "@/hooks/useContacts";
+import { User } from "@supabase/supabase-js";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,98 +17,116 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { toast } from "sonner";
 
 const Index = () => {
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const navigate = useNavigate();
+  const [user, setUser] = useState<User | null>(null);
   const [editingContact, setEditingContact] = useState<Contact | undefined>();
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [contactToDelete, setContactToDelete] = useState<string | null>(null);
+  const { contacts, isLoading, addContact, updateContact, deleteContact } = useContacts();
 
-  const handleAddContact = (contactData: Omit<Contact, "id">) => {
-    const newContact: Contact = {
-      ...contactData,
-      id: Date.now().toString(),
-    };
-    setContacts([...contacts, newContact]);
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null);
+        if (!session?.user) {
+          navigate("/auth");
+        }
+      }
+    );
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (!session?.user) {
+        navigate("/auth");
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [navigate]);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
   };
 
-  const handleUpdateContact = (updatedContact: Contact) => {
-    setContacts(contacts.map((c) => (c.id === updatedContact.id ? updatedContact : c)));
+  const handleAddContact = (contact: Omit<Contact, "id">) => {
+    addContact(contact);
+  };
+
+  const handleUpdateContact = (contact: Contact) => {
+    updateContact(contact);
     setEditingContact(undefined);
-  };
-
-  const handleDeleteContact = (id: string) => {
-    setContacts(contacts.filter((c) => c.id !== id));
-    setDeleteId(null);
-    toast.success("Contact deleted successfully");
   };
 
   const handleEdit = (contact: Contact) => {
     setEditingContact(contact);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  const handleDelete = (id: string) => {
+    setContactToDelete(id);
+  };
+
+  const confirmDelete = () => {
+    if (contactToDelete) {
+      deleteContact(contactToDelete);
+      setContactToDelete(null);
+    }
+  };
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-7xl">
-        <header className="text-center mb-12">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <Users className="h-10 w-10 text-primary" />
-            <h1 className="text-4xl md:text-5xl font-bold text-foreground">Contact Manager</h1>
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-4xl font-bold text-foreground mb-2">Contact Manager</h1>
+            <p className="text-muted-foreground">Manage your contacts efficiently</p>
           </div>
-          <p className="text-lg text-muted-foreground">
-            Organize and manage your contacts effortlessly
-          </p>
-        </header>
+          <Button onClick={handleSignOut} variant="outline" size="sm">
+            <LogOut className="h-4 w-4 mr-2" />
+            Sign Out
+          </Button>
+        </div>
 
-        <div className="grid lg:grid-cols-3 gap-8 mb-12">
+        <div className="grid gap-8 lg:grid-cols-3">
           <div className="lg:col-span-1">
             <ContactForm
               onAddContact={handleAddContact}
-              editingContact={editingContact}
               onUpdateContact={handleUpdateContact}
+              editingContact={editingContact}
               onCancelEdit={() => setEditingContact(undefined)}
             />
           </div>
 
           <div className="lg:col-span-2">
-            <div className="mb-6">
-              <h2 className="text-2xl font-semibold text-foreground mb-2">
-                Your Contacts
-                {contacts.length > 0 && (
-                  <span className="text-muted-foreground ml-2">({contacts.length})</span>
-                )}
-              </h2>
-              <div className="h-1 w-20 bg-gradient-to-r from-primary to-accent rounded-full" />
-            </div>
-            <ContactList
-              contacts={contacts}
-              onEdit={handleEdit}
-              onDelete={(id) => setDeleteId(id)}
-            />
+            {isLoading ? (
+              <div className="text-center py-16">
+                <p className="text-muted-foreground">Loading contacts...</p>
+              </div>
+            ) : (
+              <ContactList contacts={contacts} onEdit={handleEdit} onDelete={handleDelete} />
+            )}
           </div>
         </div>
-
-        <AlertDialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete Contact</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure you want to delete this contact? This action cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => deleteId && handleDeleteContact(deleteId)}
-                className="bg-destructive hover:bg-destructive/90"
-              >
-                Delete
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </div>
+
+      <AlertDialog open={!!contactToDelete} onOpenChange={() => setContactToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete this contact.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
